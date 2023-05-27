@@ -27,7 +27,7 @@ async def root():
 
 
 @app.post("/train")
-async def train_dreamooth(model_name: str, instance_prompt: str, file: UploadFile = File(...)):
+async def train_dreamooth(model_name: str, class_prompt: str, instance_prompt: str, file: UploadFile = File(...)):
     try:
         file_content = await file.read()
         if not os.path.exists("test123"):
@@ -37,7 +37,10 @@ async def train_dreamooth(model_name: str, instance_prompt: str, file: UploadFil
         with open(f"datasets/{file.filename}", "wb") as f:
             f.write(file_content)
         unzip_file(f"datasets/{file.filename}", f"datasets/{model_name}")
-        is_training = train(model_name=model_name, is_new_model=True)
+        is_training = train(model_name=model_name, is_new_model=True,
+                            instance_prompt=instance_prompt, class_prompt=class_prompt)
+        if is_training:
+            return {"error": False, "message": "Model is training"}
 
         return {"filename": file.filename}
     except FileExistsError:
