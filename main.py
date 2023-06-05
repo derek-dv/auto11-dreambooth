@@ -1,15 +1,19 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Body
+from fastapi.responses import StreamingResponse
 import os
+from io import BytesIO
 import zipfile
-import magic
 from train import train
+from predict import predict
 app = FastAPI()
 
 
-def is_zip_file(file_contents):
-    mime_type = magic.from_buffer(file_contents, mime=True)
-    print(mime_type)
-    return mime_type == 'application/zip'
+def is_zip_file(file_path):
+    try:
+        with zipfile.ZipFile(file_path) as zip_file:
+            return True
+    except zipfile.BadZipFile:
+        return False
 
 
 class NotZipException(Exception):
@@ -27,23 +31,41 @@ async def root():
 
 
 @app.post("/train")
-async def train_dreamooth(model_name: str, class_prompt: str, instance_prompt: str, file: UploadFile = File(...)):
+async def train_dreamooth(file: UploadFile, model_name: str = Body(...), instance_prompt: str = Body(...), class_prompt: str = Body(...), is_new_model: bool = Body(False)):
     try:
-        file_content = await file.read()
-        if not os.path.exists("test123"):
-            os.makedirs("datasets")
-        if not is_zip_file(file_content):
-            raise NotZipException("File uploaded not zip")
-        with open(f"datasets/{file.filename}", "wb") as f:
-            f.write(file_content)
-        unzip_file(f"datasets/{file.filename}", f"datasets/{model_name}")
-        is_training = train(model_name=model_name, is_new_model=True,
+        print(file)
+        if is_new_model:
+            file_content = await file.read()
+            if not os.path.exists(f"/workspace/stable-diffusion-webui/datasets/{model_name}"):
+                os.makedirs(
+                    f"/workspace/stable-diffusion-webui/datasets/{model_name}")
+            with open(f"/workspace/stable-diffusion-webui/datasets/{file.filename}", "wb") as f:
+                f.write(file_content)
+            if not is_zip_file(f"/workspace/stable-diffusion-webui/datasets/{file.filename}"):
+                raise NotZipException("File uploaded not zip")
+            unzip_file(f"/workspace/stable-diffusion-webui/datasets/{file.filename}",
+                       f"/workspace/stable-diffusion-webui/datasets/{model_name}")
+        is_training = train(model_name=model_name, is_new_model=is_new_model,
                             instance_prompt=instance_prompt, class_prompt=class_prompt)
         if is_training:
-            return {"error": False, "message": "Model is training"}
+            return {"error": False, "message": "Training started"}
 
         return {"filename": file.filename}
     except FileExistsError:
+        print("Exists")
         return {"message": "File exists"}
     except NotZipException:
         return {"message": "File uploaded not zip"}
+
+
+@app.post("/predict")
+async def predict_dreambooth(model_name: str = Body(...), prompt: str = Body(...)):
+    result = predict(prompt, model_name)
+    if not result["error"]:
+        image = result["image"]
+        image_bytes = BytesIO()
+        image.save(image_bytes, format="JPEG")
+        image_bytes.seek(0)
+        return StreamingResponse(image_bytes, media_type="image/png")
+
+    return result
